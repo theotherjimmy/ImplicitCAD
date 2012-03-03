@@ -16,7 +16,7 @@ import Graphics.Implicit.ExtOpenScad.Expressions
 import Graphics.Implicit.ExtOpenScad.Util
 import Graphics.Implicit.ExtOpenScad.Primitives
 import qualified Graphics.Implicit.Operations as Op
-import Data.Map (Map, lookup, insert, union)
+import Data.Map (Map, lookup, insert, union, fromList)
 import Text.ParserCombinators.Parsec 
 import Text.ParserCombinators.Parsec.Expr
 import Control.Monad (liftM)
@@ -42,6 +42,8 @@ computationStatement =
 			extrudeStatement,
 			shellStatement,
 			userModuleDeclaration,
+			includeStatement,
+			useStatement,
 			unimplemented "mirror",
 			unimplemented "multmatrix",
 			unimplemented "color",
@@ -59,8 +61,6 @@ computationStatement =
 		s <- tryMany [
 			echoStatement,
 			assigmentStatement,
-			includeStatement,
-			useStatement,
 			sphere,
 			cube,
 			square,
@@ -136,7 +136,7 @@ includeStatement = (do
 		state@(varlookup,obj2s,obj3s) <- ioWrappedState;
 		case reverse filename of
 			'o':'.':_ -> do
-				loaded :: LoadStatus VariableLookup
+				loaded :: LoadStatus [(String, OpenscadObj)]
 					<- load_ filename ["."] "openscadAPI"
 				case loaded of
 					LoadFailure errs -> do
@@ -144,7 +144,7 @@ includeStatement = (do
 						return state
 					LoadSuccess _ newapi -> do
 						putStrLn "Loaded Haskell Module..."
-						return (union varlookup newapi, obj2s, obj3s)
+						return (union (fromList newapi) varlookup, obj2s, obj3s)
 			_ -> do
 				content <- readFile filename
 				case parse (many1 computationStatement) ""  content of

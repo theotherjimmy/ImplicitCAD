@@ -7,6 +7,7 @@ module Graphics.Implicit.Primitives.Obj2 where
 
 import Graphics.Implicit.Definitions
 import qualified Graphics.Implicit.MathUtil as MathUtil
+import qualified Graphics.Implicit.Geometry as Geometry
 import Graphics.Implicit.Primitives.Definitions
 import qualified Graphics.Implicit.SaneOperators as S
 import Data.List (nub)
@@ -31,5 +32,5 @@ instance PrimitiveSupporter2 Obj2 where
 			seemsInRight = odd $ length $ filter (>0) $ nub crossing_points
 			seemsInLeft = odd $ length $ filter (<0) $ nub crossing_points
 			isIn = seemsInRight && seemsInLeft
-			dists = map (MathUtil.distFromLineSeg p) pairs
+			dists = map (Geometry.distFromLineSeg p) pairs
 

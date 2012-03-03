@@ -36,6 +36,9 @@ class Normable a where
 class InnerProductSpace a where
 	(⋅) :: a -> a -> ℝ
 
+class CrossProductable a b | a -> b where
+	(⨯) :: a -> a -> b
+
 -- * I should be able to create instances for all Num instances,
 -- but Haskell's type checker doesn't seem to play nice with them.
 
@@ -96,6 +99,9 @@ infixl 6 -
 (/) :: (Multiplicative a b c) => (MultiplicativeInvertable b) => a -> b -> c
 x / y = x * (multiplicativeInverse y)
 infixl 7 /
+
+--normalize :: (Normable a, Multiplicative a ℝ a, MultiplicativeIntervatble a) => a -> a
+normalize a = a / norm a
 
 
 
@@ -163,4 +169,9 @@ instance InnerProductSpace ℝ3 where
 	(a1, a2, a3) ⋅ (b1, b2, b3) = a1*b1 + a2*b2+a3*b3
 
 
+instance CrossProductable ℝ2 ℝ3 where
+	(a1, a2) ⨯ (b1, b2) = (0,0,a1*b2 - b1*a2)
+
+instance CrossProductable ℝ3 ℝ3 where
+	(a1, a2, a3) ⨯ (b1, b2, b3) = (a2*b3 - b2*a3, a3*b1 - b3*a1, a1*b2 - b1*a2)
 

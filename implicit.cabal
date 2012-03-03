@@ -26,6 +26,7 @@ Library
         Graphics.Implicit.Operations
         Graphics.Implicit.SaneOperators
         Graphics.Implicit.ExtOpenScad
+        Graphics.Implicit.ExtOpenScad.API
     Other-Modules:
         Graphics.Implicit.Primitives
         Graphics.Implicit.Primitives.Definitions
