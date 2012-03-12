@@ -1,81 +1,196 @@
 -- Implicit CAD. Copyright (C) 2011, Christopher Olah (chris@colah.ca)
 -- Released under the GNU GPL, see LICENSE
 
-{-# LANGUAGE MultiParamTypeClasses, FunctionalDependencies, FlexibleInstances, FlexibleContexts, TypeSynonymInstances, UndecidableInstances #-}
+{-# LANGUAGE MultiParamTypeClasses, FunctionalDependencies, FlexibleInstances, FlexibleContexts, TypeSynonymInstances, UndecidableInstances, NoMonomorphismRestriction #-}
 
-module Graphics.Implicit.Primitives (
-	sphere,
-	circle,
-	cylinder, cylinderC, cylinder2, cylinder2C,
-	rect3R, rectR,
-	regularPolygon,
-	polygonR,
-	zsurface
-) where
+module Graphics.Implicit.Primitives where
 
--- Some type definitions :)
 import Graphics.Implicit.Definitions
+import Data.List (sortBy)
+import Graphics.Implicit.MathUtil   (pack)
+import Graphics.Implicit.ObjectUtil (getBox2, getBox3, getImplicit2, getImplicit3)
 
--- Most of the functions we're exporting come from here
--- They are methods of classes.
-import Graphics.Implicit.Primitives.Definitions
+-- $ 3D Primitives
 
--- These files implement the classes for types
--- corresponding to the name of the file.
-import Graphics.Implicit.Primitives.Obj2
-import Graphics.Implicit.Primitives.Obj3
-import Graphics.Implicit.Primitives.BoxedObj2
-import Graphics.Implicit.Primitives.BoxedObj3
-import Graphics.Implicit.Primitives.SymbolicObj2
-import Graphics.Implicit.Primitives.SymbolicObj3
+sphere ::
+	ℝ                  -- ^ Radius of the sphere
+	-> SymbolicObj3    -- ^ Resulting sphere
 
--- We export a few functions modified by operations
--- for users conveniences...
-import Graphics.Implicit.Operations
+sphere r = Sphere r
 
--- If you are confused as to how these functions work, please refer to
--- http://christopherolah.wordpress.com/2011/11/06/manipulation-of-implicit-functions-with-an-eye-on-cad/
+rect3R ::
+	ℝ                 -- ^ Rounding of corners
+	-> ℝ3             -- ^ Bottom.. corner
+	-> ℝ3             -- ^ Top right... corner
+	-> SymbolicObj3   -- ^ Resuting cube - (0,0,0) is bottom left...
 
-cylinder :: (PrimitiveSupporter3 obj, BasicObj obj ℝ3) =>
-	ℝ         -- ^ Radius of the cylinder	
-	-> ℝ      -- ^ Height of the cylinder
-	-> obj    -- ^ Resulting cylinder
-cylinder r h = cylinder2 r r h
+rect3R = Rect3R
 
-cylinderC :: (PrimitiveSupporter3 obj, BasicObj obj ℝ3) =>
-	ℝ         -- ^ Radius of the cylinder	
-	-> ℝ      -- ^ Height of the cylinder
-	-> obj    -- ^ Resulting cylinder
-cylinderC r h = translate (0,0,-h/2.0) $ cylinder r h
+cylinder2 ::
+	ℝ                   -- ^ Radius of the cylinder	
+	-> ℝ                -- ^ Second radius of the cylinder
+	-> ℝ                -- ^ Height of the cylinder
+	-> SymbolicObj3     -- ^ Resulting cylinder
+
+cylinder2 r1 r2 h = Cylinder r1 r2 h
+
+cylinder r = cylinder2 r r
+
+-- $ 2D Primitives
+
+circle ::
+	ℝ               -- ^ radius of the circle
+	-> SymbolicObj2 -- ^ resulting circle
+
+circle   = Circle
+
+rectR ::
+	ℝ
+	-> ℝ2           -- ^ Bottom left corner
+	-> ℝ2           -- ^ Top right corner
+	-> SymbolicObj2 -- ^ Resulting square (bottom right = (0,0) )
+
+rectR = RectR
+
+polygonR ::
+	ℝ                -- ^ Rouding of the polygon
+	-> [ℝ2]          -- ^ Verticies of the polygon
+	-> SymbolicObj2  -- ^ Resulting polygon
+
+polygonR = PolygonR
+
+polygon = polygonR 0
+
+-- $ Shared Operations
+
+class Object obj vec | obj -> vec where
+	
+	-- | Translate an object by a vector of appropriate dimension. 
+	translate :: 
+		vec      -- ^ Vector to translate by (Also: a is a vector, blah, blah)
+		-> obj   -- ^ Object to translate
+		-> obj   -- ^ Resulting object
+
+	-- | Scale an object
+	scale :: 
+		ℝ       -- ^ Amount to scale by
+		-> obj  -- ^ Object to scale
+		-> obj  -- ^ Resulting scaled object	
+	
+	-- | Complement an Object
+	complement :: 
+		obj     -- ^ Object to complement
+		-> obj  -- ^ Result
+	
+	-- | Rounded union
+	unionR :: 
+		ℝ        -- ^ The radius of rounding
+		-> [obj] -- ^ objects to union
+		-> obj   -- ^ Resulting object
+	
+	-- | Rounded minimum
+	intersectR :: 
+		ℝ        -- ^ The radius of rounding
+		-> [obj] -- ^ Objects to intersect
+		-> obj   -- ^ Resulting object
+	
+	-- | Rounded difference
+	differenceR :: 
+		ℝ        -- ^ The radius of rounding
+		-> [obj] -- ^ Objects to difference 
+		-> obj   -- ^ Resulting object
+
+	-- | Outset an object.
+	outset :: 
+		ℝ        -- ^ distance to outset
+		-> obj   -- ^ object to outset
+		-> obj   -- ^ resulting object
+
+	-- | Make a shell of an object.
+	shell :: 
+		ℝ        -- ^ width of shell
+		-> obj   -- ^ object to take shell of
+		-> obj   -- ^ resulting shell
+
+	-- | Get the bounding box an object
+	getBox :: 
+		obj           -- ^ Object to get box of
+		-> (vec, vec) -- ^ Bounding box
+
+	-- | Get the implicit function for an object
+	getImplicit :: 
+		obj           -- ^ Object to get implicit function of
+		-> (vec -> ℝ) -- ^ Implicit function
+
+	implicit :: 
+		(vec -> ℝ)     -- ^ Implicit function
+		-> (vec, vec)  -- ^ Bounding box
+		-> obj         -- ^ Resulting object
+	
+
+instance Object SymbolicObj2 ℝ2 where
+	translate   = Translate2
+	scale       = Scale2
+	complement  = Complement2
+	unionR      = UnionR2
+	intersectR  = IntersectR2
+	differenceR = DifferenceR2
+	outset      = Outset2
+	shell       = Shell2
+	getBox      = getBox2
+	getImplicit = getImplicit2
+	implicit a b= EmbedBoxedObj2 (a,b)
+
+instance Object SymbolicObj3 ℝ3 where
+	translate   = Translate3
+	scale       = Scale3
+	complement  = Complement3
+	unionR      = UnionR3
+	intersectR  = IntersectR3
+	differenceR = DifferenceR3
+	outset      = Outset3
+	shell       = Shell3
+	getBox      = getBox3
+	getImplicit = getImplicit3
+	implicit a b= EmbedBoxedObj3 (a,b)
+
+union = unionR 0
+difference = differenceR 0
+intersect = intersectR 0
+
+-- 3D operations
+
+extrudeR = ExtrudeR
+
+extrudeRMod = ExtrudeRMod
+
+extrudeOnEdgeOf = ExtrudeOnEdgeOf
+
+rotate3 = Rotate3
 
 
-cylinder2C :: (PrimitiveSupporter3 obj, BasicObj obj ℝ3) =>
-	ℝ         -- ^ Radius of the cylinder	
-	-> ℝ      -- ^ Second radius of the cylinder
-	-> ℝ      -- ^ Height of the cylinder
-	-> obj    -- ^ Resulting cylinder
-cylinder2C r1 r2 h = translate (0,0,-h/2.0) $ cylinder2 r1 r2 h
+pack3 :: ℝ2 -> ℝ -> [SymbolicObj3] -> Maybe SymbolicObj3
+pack3 (dx, dy) sep objs = 
+	let
+		boxDropZ ((a,b,c),(d,e,f)) = ((a,b),(d,e))
+		withBoxes :: [(Box2, SymbolicObj3)]
+		withBoxes = map (\obj -> ( boxDropZ $ getBox3 obj, obj)) objs
+	in case pack ((0,0),(dy,dy)) sep withBoxes of
+			(a, []) -> Just $ union $ map (\((x,y),obj) -> translate (x,y,0) obj) a
+			_ -> Nothing
+				
+
+-- 2D operations
+
+rotate = Rotate2
 
 
+pack2 :: ℝ2 -> ℝ -> [SymbolicObj2] -> Maybe SymbolicObj2
+pack2 (dx, dy) sep objs = 
+	let
+		withBoxes :: [(Box2, SymbolicObj2)]
+		withBoxes = map (\obj -> ( getBox2 obj, obj)) objs
+	in case pack ((0,0),(dy,dy)) sep withBoxes of
+			(a, []) -> Just $ union $ map (\((x,y),obj) -> translate (x,y) obj) a
+			_ -> Nothing
 
-regularPolygon ::
-	ℕ       -- ^ number of sides
-	-> ℝ    -- ^ radius
-	-> Obj2 -- ^ resulting regular polygon
-regularPolygon sides r = polygonR 0 [ (r*cos(2*pi*m/sidesr), r*sin(2*pi*m/sidesr)) | m <- [0.. sidesr -1]]
-	where sidesr = fromIntegral sides
-
-
-zsurface ::
-	(ℝ2 -> ℝ) -- ^ Description of the height of the surface
-	-> Obj3   -- ^ Resulting 3D object
-zsurface f = \(x,y,z) -> f (x,y) - z
-
-
--- This function is commented out because it doesn't obey the magnitude requirement.
--- Refer to blog post.
--- It needs to be fixed at some point, but the math is somewhat non-trivial.
---ellipse :: ℝ -> ℝ -> Obj2
---ellipse a b
---    | a < b = \(x,y) -> sqrt ((b/a*x)**2 + y**2) - a
---    | otherwise = \(x,y) -> sqrt (x**2 + (a/b*y)**2) - b

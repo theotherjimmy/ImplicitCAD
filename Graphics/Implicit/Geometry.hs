@@ -131,14 +131,17 @@ tesselateLoopInterior points =
 		righthanded (a,b,c) = (\(_,_,z) -> z < 0) $ (b - a) ⨯ (c - a) 
 		-- the actual magic
 		-- see if we can simplify the path by adding a triangle and removing a point
-		try :: ℕ -> [ℝ2] -> [(ℝ2,ℝ2,ℝ2)]
-		try n prespoints@(a:b:c:others) = traceShow prespoints $ traceShow ((a,b,c), righthanded (a,b,c),filter isJust $ map (intersect (a,c)) $ pairs prespoints ) $
-			if n > (20::ℕ) + (5::ℕ)*length points + length points^2
+		try :: 
+			ℕ   -- ^ steps since last eliminated a point; terminate if it exceeds loop size
+			-> [ℝ2]    -- ^ remaining points
+			-> [(ℝ2,ℝ2,ℝ2)] -- ^ resuting 2D triangles
+		try n prespoints@(a:b:c:others) = 
+			if n > length points
 			then [] -- in cases of invalid input, fail gracefully
 			else if a == b
-			then try (n+ (1::ℕ)) (a:c:others)
+			then try 0 (a:c:others)
 			else if righthanded (a,b,c) && (all isNothing $ map (intersect (a,c)) $ pairs prespoints)
-			then (b,a,c):(try (n+ (1::ℕ)) (a:c:others) )
+			then (b,a,c):(try 0 (a:c:others) )
 			else try (n+(1::ℕ)) (b:c:others ++ [a])
 		try _ _ = []
 	in

@@ -13,11 +13,13 @@ import Graphics.Implicit.Definitions
 import Graphics.Implicit.ExtOpenScad.Definitions
 import Graphics.Implicit.ExtOpenScad.Expressions
 import Data.Map (Map, lookup, insert)
+import qualified Data.Map as Map
 import qualified Data.List
 import Text.ParserCombinators.Parsec 
 import Text.ParserCombinators.Parsec.Expr
 import Data.Maybe (isJust,isNothing)
 import qualified Control.Exception as Ex
+import Control.Monad (forM_)
 
 instance Monad ArgParser where
 	(ArgParser str fallback doc f) >>= g = ArgParser str fallback doc (\a -> (f a) >>= g)
@@ -25,17 +27,31 @@ instance Monad ArgParser where
 	(ArgParserFailIf b errmsg child) >>= g = ArgParserFailIf b errmsg (child >>= g)
 	return a = ArgParserTerminator a
 
-argMap :: [OpenscadObj] -> [(String, OpenscadObj)] -> ArgParser a -> Maybe a
-argMap _ _ (ArgParserTerminator a) = Just a
-argMap a b (ArgParserFailIf test err child) = if test then Nothing else argMap a b child
-argMap (x:unnamedArgs) namedArgs (ArgParser _ _ _ f) = 
-	argMap unnamedArgs namedArgs (f x)
-argMap [] namedArgs (ArgParser str fallback _ f) = case Data.List.lookup str namedArgs of
-	Just a -> argMap [] namedArgs (f a)
-	Nothing -> case fallback of
-		Just b -> argMap [] namedArgs (f b)
-		Nothing -> Nothing
+argMap :: [OpenscadObj] -> [(String, OpenscadObj)] -> ArgParser a -> (Maybe a, [String])
+argMap a b = argMap2 a (Map.fromList b)
 
+argMap2 a b (ArgParserTerminator val) = 
+	(Just val,
+		if length a + Map.size b > 0
+		then ["unused arguments"]
+		else []
+	)
+argMap2 a b (ArgParserFailIf test err child) = 
+	if test 
+	then (Nothing, [err])
+	else argMap2 a b child
+argMap2 unnamedArgs namedArgs (ArgParser name fallback _ f) = 
+	case Map.lookup name namedArgs of
+		Just a -> argMap2 
+			unnamedArgs 
+			(Map.delete name namedArgs) 
+			(f a)
+		Nothing -> case unnamedArgs of
+			x:xs -> argMap2 xs namedArgs (f x)
+			[]   -> case fallback of
+				Just b  -> argMap2 [] namedArgs (f b)
+				Nothing -> (Nothing, ["No value and no default for argument " ++ name])
+	
 -- $ Here there be dragons!
 --   We give undefined (= an error) and let laziness prevent if from ever being touched.
 --   We're using IO so that we can catch an error if this backfires.
@@ -55,7 +71,10 @@ argument name =
 	ArgParser name Nothing "" $ \oObjVal -> do
 		let
 			val = fromOObj oObjVal :: Maybe desiredType
-			errmsg = "arg " ++ show oObjVal ++ " not compatible with " ++ name
+			errmsg = case oObjVal of
+				OError errs -> "error in computing value for arugment " ++ name
+				             ++ ": " ++ concat errs
+				_   ->  "arg " ++ show oObjVal ++ " not compatible with " ++ name
 		-- Using /= Nothing would require Eq desiredType
 		ArgParserFailIf (isNothing val) errmsg $ ArgParserTerminator $ (\(Just a) -> a) val
 
@@ -89,12 +108,12 @@ defaultTo (ArgParser name oldDefMaybeVal doc next) newDefVal =
 addObj2 :: (Monad m) => Obj2Type -> m ComputationStateModifier
 addObj2 obj = return $  \ ioWrappedState -> do
 		(varlookup, obj2s, obj3s) <- ioWrappedState
-		return (varlookup, obj:obj2s, obj3s)
+		return (varlookup, obj2s ++ [obj], obj3s)
 
 addObj3 :: (Monad m) => Obj3Type -> m ComputationStateModifier
 addObj3 obj = return $  \ ioWrappedState -> do
 		(varlookup, obj2s, obj3s) <- ioWrappedState
-		return (varlookup, obj2s, obj:obj3s)
+		return (varlookup, obj2s, obj3s ++ [obj])
 
 changeObjs :: (Monad m) => ([Obj2Type] -> [Obj2Type]) -> ([Obj3Type] -> [Obj3Type]) -> m ComputationStateModifier
 changeObjs mod2s mod3s = return $  \ ioWrappedState -> do
@@ -217,11 +236,22 @@ moduleWithoutSuite name argHandeler = (do
 	return $ \ ioWrappedState -> do
 		state@(varlookup, obj2s, obj3s) <- ioWrappedState
 		case argMap 
-			(map ($varlookup) unnamed) 
-			(map (\(a,b) -> (a, b varlookup)) named) argHandeler 
+			(map ($varlookup) unnamed)
+			(map (\(a,b) -> (a, b varlookup)) named)
+			argHandeler
 			of
-				Just computationModifier ->  computationModifier (return state)
-				Nothing -> (return state);
+				(Just computationModifier, []) ->  computationModifier (return state)
+				(Nothing, []) -> do
+					putStrLn $ "Module " ++ name ++ " failed without a message"
+					return state
+				(Nothing, errs) -> do
+					putStrLn $ "Module " ++ name ++ " failed with the following messages:"
+					forM_ errs (\err -> putStrLn $ "  " ++ err)
+					return state
+				(Just computationModifier, errs) -> do
+					putStrLn $ "Module " ++ name ++ " gave the following warnings:"
+					forM_ errs (\err -> putStrLn $ "  " ++ err)
+					computationModifier (return state)
 	) <?> name
 
 

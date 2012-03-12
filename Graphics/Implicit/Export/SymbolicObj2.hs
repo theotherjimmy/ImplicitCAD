@@ -14,13 +14,12 @@ import Graphics.Implicit.Definitions
 import Graphics.Implicit.Export.Definitions
 import Graphics.Implicit.Export.MarchingSquares
 import Graphics.Implicit.Export.MarchingSquaresFill
-import Graphics.Implicit.Operations
 import Graphics.Implicit.Primitives
+import Graphics.Implicit.ObjectUtil
 
-import Graphics.Implicit.Export.Symbolic.CoerceSymbolic2
-import Graphics.Implicit.Export.Symbolic.CoerceSymbolic3
 import Graphics.Implicit.Export.Symbolic.Rebound2
 import Graphics.Implicit.Export.Symbolic.Rebound3
+
 
 import qualified Graphics.Implicit.SaneOperators as S
 import Graphics.Implicit.SaneOperators (norm, normalize, (⨯))
@@ -33,7 +32,6 @@ import Debug.Trace
 instance DiscreteAproxable SymbolicObj2 [Polyline] where
 	discreteAprox res obj = symbolicGetContour res obj
 
-
 symbolicGetContour :: ℝ ->  SymbolicObj2 -> [Polyline]
 symbolicGetContour _ (RectR 0 (x1,y1) (x2,y2)) = [[ (x1,y1), (x2,y1), (x2,y2), (x1,y2), (x1,y1) ]]
 symbolicGetContour res (Circle r) = [[ ( r*cos(2*pi*m/n), r*sin(2*pi*m/n) ) | m <- [0.. n] ]] where
@@ -42,7 +40,7 @@ symbolicGetContour res (Translate2 v obj) = map (map (S.+ v) ) $ symbolicGetCont
 symbolicGetContour res (Scale2 s obj) = map (map (S.* s)) $ symbolicGetContour res obj
 symbolicGetContour _ (PolygonR 0 points) = 
 		[points ++ [head points]]
-symbolicGetContour res obj = case rebound2 (coerceSymbolic2 obj) of
+symbolicGetContour res obj = case rebound2 (getImplicit2 obj, getBox2 obj) of
 	(obj, (a,b)) -> getContour a b (res,res) obj
 
 
@@ -71,7 +69,7 @@ symbolicGetContourMesh res (Circle r) =
 	  )| m <- [0.. n-1] ] 
 	where
 		n = max 5 (fromIntegral $ ceiling $ 2*pi*r/res)
-symbolicGetContourMesh res obj = case rebound2 (coerceSymbolic2 obj) of
+symbolicGetContourMesh res obj = case rebound2 (getImplicit2 obj, getBox2 obj) of
 	(obj, (a,b)) -> getContourMesh a b (res,res) obj
 
 
