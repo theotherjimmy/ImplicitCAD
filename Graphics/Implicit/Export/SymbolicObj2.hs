@@ -33,8 +33,6 @@ import Debug.Trace
 instance DiscreteAproxable SymbolicObj2 [Polyline] where
 	discreteAprox res obj = symbolicGetContour res obj
 
-symbolicGetOrientedContour :: ℝ ->  SymbolicObj2 -> [Polyline]
-symbolicGetOrientedContour res symbObj = map Geometry.orient $ symbolicGetContour res symbObj
 
 symbolicGetContour :: ℝ ->  SymbolicObj2 -> [Polyline]
 symbolicGetContour _ (RectR 0 (x1,y1) (x2,y2)) = [[ (x1,y1), (x2,y1), (x2,y2), (x1,y2), (x1,y1) ]]
@@ -64,31 +62,8 @@ symbolicGetContourMesh _ (RectR 0 (x1,y1) (x2,y2)) =
 	++ [((),(x),(x1,y1)) |  ]
 		where n = max 3 (ceil $ r/res*3)
 -}
-symbolicGetContourMesh res symbObj@(PolygonR 0 points) = 
-	let
-		traceReveal a = traceShow a a
-		pairs = [(points !!! n, points !!! (n+1) ) | n <- [0 .. (length points) - 1] ]
-		-- A accessor that doesn't go out of bounds
-		(!!!) :: Show a => [a] -> Int -> a
-		l !!! n = l !! (mod n $ length l)
-		-- Test the handedness of a triangle.
-		-- Given an oriented loop, a triangle built from consecutive points on it
-		-- can be determined to be inside or out based on its hadedness.
-		righthanded (a,b,c) = case ((b S.- a),(c S.- a)) of
-			((x1,y1), (x2,y2)) -> x1*y2 - x2*y1 < 0
-		-- the actual magic
-		-- see if we can simplify the path by adding a triangle and removing a point
-		try :: ℕ -> [ℝ2] -> [(ℝ2,ℝ2,ℝ2)]
-		try n (a:b:c:others) = traceShow (n, a:b:c:others) $
-			if n > 20 + 20*length points +length points^2
-			then [] {-case rebound2 (coerceSymbolic2 symbObj) of
-				(obj, (a,b)) -> getContourMesh a b (res,res) obj -}
-			else if righthanded (a,b,c) && (all isNothing $ map (Geometry.intersect (a,c)) pairs)
-			then (b,a,c):(try (n+1) (a:c:others) )
-			else try (n+1) (b:c:others ++ [a])
-		try _ _ = []
-	in
-		try 0 $ Geometry.orient points 
+symbolicGetContourMesh _ symbObj@(PolygonR 0 points) = 
+	Geometry.tesselateLoopInterior points
 symbolicGetContourMesh res (Circle r) = 
 	[ ((0,0),
 	   (r*cos(2*pi*m/n), r*sin(2*pi*m/n)), 

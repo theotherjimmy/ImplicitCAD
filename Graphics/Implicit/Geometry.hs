@@ -15,12 +15,15 @@ import Graphics.Implicit.Definitions
 import Graphics.Implicit.SaneOperators
 import Data.List (sortBy, minimumBy)
 import Debug.Trace
+import Data.Maybe (isNothing, isJust)
 
 type LineSeg = (ℝ2,ℝ2)
--- Make open...
--- The intersection of two line segments
+
+-- | The intersection of two line segments
+--   We consider them to be open line segments,
+--   so if an end catches we don't count it
 intersect :: LineSeg -> LineSeg -> Maybe ℝ2
-intersect (a1, a2) (b1, b2) = (\s -> traceShow ((a1, a2), (b1, b2), s) s) $
+intersect (a1, a2) (b1, b2) = 
 	let
 		-- transform coordinates so a is flat
 		-- first (- a1)
@@ -42,7 +45,10 @@ intersect (a1, a2) (b1, b2) = (\s -> traceShow ((a1, a2), (b1, b2), s) s) $
 		-- c will be the intersect
 		c'x = b1'x + ((0::ℝ)-b1'y)/b'slope
 		-- a convenience func for the next part
-		between a b p = (a < p && p < b) || (b < p && p < a)
+		-- (to account for arithmetic error, err)
+		err = (1::ℝ) - (0.000005 :: ℝ)
+		between :: ℝ -> ℝ -> ℝ -> Bool
+		between a b p = (err*a < p && p < err*b) || (err*b < p && p < err*a)
 	in
 		if between 0 moda2x c'x && between b1'x b2'x c'x
 		then Just $ untransform (c'x, b1'y + (c'x-b1'x)*b'slope)
@@ -102,3 +108,28 @@ orient points =
 		if locallyClockwiseAt leftMost points
 		then points
 		else reverse points
+
+
+tesselateLoopInterior points = 
+	let
+		pairs points = [(points !!! n, points !!! (n + (1::ℕ)) ) | n <- [0 .. (length points - (1::ℕ))] ]
+		-- A accessor that doesn't go out of bounds
+		(!!!) :: Show a => [a] -> Int -> a
+		l !!! n = l !! (mod n $ length l)
+		-- Test the handedness of a triangle.
+		-- Given an oriented loop, a triangle built from consecutive points on it
+		-- can be determined to be inside or out based on its hadedness.
+		righthanded (a,b,c) = (\(_,_,z) -> z < 0) $ (b - a) ⨯ (c - a) 
+		-- the actual magic
+		-- see if we can simplify the path by adding a triangle and removing a point
+		try :: ℕ -> [ℝ2] -> [(ℝ2,ℝ2,ℝ2)]
+		try n prespoints@(a:b:c:others) = traceShow prespoints $ traceShow ((a,b,c), righthanded (a,b,c),filter isJust $ map (intersect (a,c)) $ pairs prespoints ) $
+			if n > (20::ℕ) + (5::ℕ)*length points + length points^2
+			then [] -- in cases of invalid input, fail gracefully
+			else if righthanded (a,b,c) && (all isNothing $ map (intersect (a,c)) $ pairs prespoints)
+			then (b,a,c):(try (n+ (1::ℕ)) (a:c:others) )
+			else try (n+(1::ℕ)) (b:c:others ++ [a])
+		try _ _ = []
+	in
+		try 0 $ orient points 
+

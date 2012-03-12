@@ -16,6 +16,7 @@ import Graphics.Implicit.Export.MarchingCubes
 
 import Graphics.Implicit.Operations
 import Graphics.Implicit.Primitives
+import qualified Graphics.Implicit.Geometry as Geometry
 
 import Graphics.Implicit.Export.SymbolicObj2
 
@@ -116,12 +117,16 @@ symbolicGetMesh res  (ExtrudeR r obj2 h) =
 			[((x1,y1,r-dh x1 y1), (x2,y2,r-dh x2 y2), (x2,y2,h-r+dh x2 y2)), 
 			 ((x1,y1,r-dh x1 y1), (x2,y2,h-r+dh x2 y2), (x1,y1,h-r+dh x1 y1)) ]
 		-- Get a contour polyline for obj2, turn it into a list of segments
-		segs = concat $ map segify $ symbolicGetOrientedContour res obj2
+		contour = map Geometry.orient $ symbolicGetContour res obj2
+		segs = concat $ map segify (map reverse contour)
 		-- Create sides for the main body of our object = segs × (r,h-r)
 		side_tris = concat $ map (\(a,b) -> segToSide a b) segs
 		-- Triangles that fill the contour. Make sure the mesh is at least (res/5) fine.
 		-- --res/5 because xyres won't always match up with normal res and we need to compensate.
-		fill_tris = {-divideMeshTo (res/5) $-} symbolicGetContourMesh res obj2
+		fill_tris = {-divideMeshTo (res/5) $-} -- 
+			if length contour /= 1
+			then symbolicGetContourMesh res obj2
+			else Geometry.tesselateLoopInterior (head contour)
 		-- The bottom. Use dh to determine the z coordinates
 		bottom_tris = map flipTri $ [((a1,a2,r-dh a1 a2), (b1,b2,r - dh b1 b2), (c1,c2,r - dh c1 c2)) 
 				| ((a1,a2),(b1,b2),(c1,c2)) <- fill_tris]
@@ -173,14 +178,18 @@ symbolicGetMesh res  (ExtrudeRMod r mod obj2 h) =
 				[((x1,y1,la1), (x2,y2,la2), (x2,y2,lb2)), 
 				 ((x1,y1,la1), (x2,y2,lb2), (x1,y1,lb1)) ]
 		-- Get a contour polyline for obj2, turn it into a list of segments
-		segs = concat $ map segify $ symbolicGetOrientedContour res obj2
+		contour = map Geometry.orient $ symbolicGetContour res obj2
+		segs = concat $ map segify (map reverse contour)
 		-- Create sides for the main body of our object = segs × (r,h-r)
 		-- Many layers...
 		side_tris = concat $
 			[concat $ map (\(a,b) -> segToSide m a b) segs | m <- [0.. n-1] ]
 		-- Triangles that fill the contour. Make sure the mesh is at least (res/5) fine.
 		-- --res/5 because xyres won't always match up with normal res and we need to compensate.
-		fill_tris = {-divideMeshTo (res/5) $-} symbolicGetContourMesh res obj2
+		fill_tris = {-divideMeshTo (res/5) $-} -- 
+			if length contour /= 1
+			then symbolicGetContourMesh res obj2
+			else Geometry.tesselateLoopInterior (head contour)
 		-- The bottom. Use dh to determine the z coordinates
 		bottom_tris = map flipTri $ [((a1,a2,r-dh a1 a2), (b1,b2,r - dh b1 b2), (c1,c2,r - dh c1 c2)) 
 				| ((a1,a2),(b1,b2),(c1,c2)) <- fill_tris]
