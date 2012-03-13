@@ -140,7 +140,7 @@ tesselateLoopInterior points =
 			then [] -- in cases of invalid input, fail gracefully
 			else if a == b
 			then try 0 (a:c:others)
-			else if righthanded (a,b,c) && (all isNothing $ map (intersect (a,c)) $ pairs prespoints)
+			else if righthanded (a,b,c) && (all (isNothing . intersect (a,c)) $ pairs prespoints)
 			then (b,a,c):(try 0 (a:c:others) )
 			else try (n+(1::ℕ)) (b:c:others ++ [a])
 		try _ _ = []
