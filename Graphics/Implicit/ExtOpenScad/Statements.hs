@@ -20,9 +20,10 @@ import Data.Map (Map, lookup, insert, union,fromList)
 import Text.ParserCombinators.Parsec 
 import Text.ParserCombinators.Parsec.Expr
 import Control.Monad (liftM)
-import Data.Maybe (fromMaybe)
 import System.Plugins.Load (load_, LoadStatus(..))
 import Control.Monad (forM_)
+import Graphics.Implicit.ExtOpenScad.Util.ArgParser
+import Graphics.Implicit.ExtOpenScad.Util.Computation
 
 tryMany = (foldl1 (<|>)) . (map try)
 
@@ -33,17 +34,8 @@ computationStatement =
 		many space
 		s <- tryMany [
 			ifStatement,
-			forStatement, 
-			unionStatement,
-			intersectStatement,
-			differenceStatement,
-			translateStatement,
-			rotateStatement,
-			scaleStatement,
-			extrudeStatement,
+			forStatement,
 			throwAway,
-			shellStatement,
-			packStatement,
 			userModuleDeclaration,
 			includeStatement,
 			useStatement,
@@ -64,12 +56,8 @@ computationStatement =
 		s <- tryMany [
 			echoStatement,
 			assigmentStatement,
-			sphere,
-			cube,
-			square,
-			cylinder,
-			circle,
-			polygon
+			includeStatement,
+			useStatement
 			]
 		many space
 		char ';'
@@ -111,10 +99,6 @@ suite = (liftM return computationStatement <|> do
 	return stmts
 	) <?> "statement suite"
 
--- | Run a list of computations!
---   We start with a state and run it through a bunch of ComputationStateModifier s.
-runComputations :: ComputationState -> [ComputationStateModifier]  -> ComputationState
-runComputations = foldl (\a b -> b $ a)
 
 -- | We think of comments as statements that do nothing. It's just convenient.
 comment = 
@@ -191,16 +175,21 @@ useStatement = (do
 assigmentStatement :: GenParser Char st ComputationStateModifier
 assigmentStatement = 
 	(try $ do
-		varSymb <- variableSymb
+		pattern <- patternMatcher
 		many space
 		char '='
 		many space
 		valExpr <- expression 0
 		return $ \ ioWrappedState -> do
-			(varlookup, obj2s, obj3s) <- ioWrappedState
+			state@(varlookup, obj2s, obj3s) <- ioWrappedState
 			let
 				val = valExpr varlookup
-			return (insert varSymb val varlookup, obj2s, obj3s) 
+				match = pattern val
+			case match of
+				Just dictWithNew -> return (union dictWithNew varlookup, obj2s, obj3s) 
+				Nothing -> do
+					putStrLn "Pattern match fail in assignment statement"
+					return state
 	) <|> (try $ do 
 		varSymb <- (try $ string "function" >> many1 space >> variableSymb) 
 		            <|> variableSymb
@@ -286,12 +275,13 @@ ifStatement = (do
 forStatement = (do
 	-- a for loop is of the form:
 	--      for ( vsymb = vexpr   ) loopStatements
-	-- eg.  for ( a     = [1,2,3] ) {echo(a); echo "lol";}
+	-- eg.  for ( a     = [1,2,3] ) {echo(a);   echo "lol";}
+	-- eg.  for ( [a,b] = [[1,2]] ) {echo(a+b); echo "lol";}
 	string "for"
 	many space
 	char '('
 	many space
-	vsymb <- variableSymb
+	pattern <- patternMatcher
 	many space
 	char '='
 	vexpr <- expression 0
@@ -308,9 +298,14 @@ forStatement = (do
 				-> OpenscadObj      -- ^ The value of vsymb for this iteration
 				-> ComputationState -- ^ The resulting state
 			loopOnce ioWrappedState val =  do
-				(varlookup, a, b) <- ioWrappedState;
+				state@(varlookup, a, b) <- ioWrappedState;
 				let
-					vsymbSetState = return (insert vsymb val varlookup, a, b)
+					match = pattern val
+					vsymbSetState = case match of
+						Just dictWithNew -> return (union dictWithNew varlookup, a, b) 
+						Nothing -> do
+							putStrLn "Pattern match fail in for loop step"
+							return state
 				runComputations vsymbSetState loopStatements
 		-- Then loops once for every entry in vexpr
 		case vexpr varlookup of 
@@ -382,10 +377,11 @@ userModule = do
 			Just (OModule m) -> 
 				case argMap 
 					(map ($varlookup) unnamed) 
-					(map (\(a,b) -> (a, b varlookup)) named) m
+					(map (\(a,b) -> (a, b varlookup)) named) 
+					(m statements)
 				of
 				(Just computationModifier, []) ->  
-					computationModifier statements (return state)
+					computationModifier (return state)
 				(Nothing, []) -> do
 					putStrLn $ "Module " ++ name ++ " failed without a message"
 					return state
@@ -396,7 +392,7 @@ userModule = do
 				(Just computationModifier, errs) -> do
 					putStrLn $ "Module " ++ name ++ " gave the following warnings:"
 					forM_ errs (\err -> putStrLn $ "  " ++ err)
-					computationModifier statements (return state)
+					computationModifier (return state)
 			_ -> do
 				putStrLn $ "module " ++ name ++ " is not in scope"
 				return state
@@ -414,9 +410,9 @@ userModuleDeclaration = do
 	return $ \ envIOWrappedState -> do
 		(envVarlookup, envObj2s, envObj3s) <- envIOWrappedState
 		let 
-			newModule = OModule $  do 
+			newModule = OModule $ \childrenStatements -> do 
 				argVarlookupModifier <- args envVarlookup
-				return $ \childrenStatements contextIOWrappedState -> do
+				return $ \contextIOWrappedState -> do
 					contextState@(contextVarLookup, contextObj2s, contextObj3s)
 						<- contextIOWrappedState
 					(_, childObj2s, childObj3s) <- runComputations 
@@ -425,7 +421,7 @@ userModuleDeclaration = do
 					let
 						children = ONum $ fromIntegral  
 							(length childObj2s + length childObj3s)
-						child = OModule $ liftM (\statemod suite -> statemod) $ do
+						child = OModule $ \suite -> do
 							n :: ℕ <- argument "n";
 							if n <= length childObj3s 
 							         then addObj3 (childObj3s !! n)
@@ -447,148 +443,4 @@ userModuleDeclaration = do
 		return (insert newModuleName (newModule) envVarlookup, envObj2s, envObj3s)
 
 
-
-getAndModUpObj2s :: (Monad m) => [ComputationStateModifier] 
-	-> (Obj2Type -> Obj3Type)
-	-> m ComputationStateModifier
-getAndModUpObj2s suite obj2mod = 
-	return $  \ ioWrappedState -> do
-		(varlookup,  obj2s,  obj3s)  <- ioWrappedState
-		(varlookup2, obj2s2, obj3s2) <- runComputations (return (varlookup, [], [])) suite
-		return 
-			(varlookup2,
-			 obj2s, 
-			 obj3s ++ (case obj2s2 of [] -> []; x:xs -> [obj2mod x])  )
-
-getAndCompressSuiteObjs :: (Monad m) => [ComputationStateModifier] 
-	-> ([Obj2Type] -> Obj2Type)
-	-> ([Obj3Type] -> Obj3Type)
-	-> m ComputationStateModifier
-getAndCompressSuiteObjs suite obj2modifier obj3modifier = 
-	return $  \ ioWrappedState -> do
-		(varlookup,  obj2s,  obj3s)  <- ioWrappedState
-		(varlookup2, obj2s2, obj3s2) <- runComputations (return (varlookup, [], [])) suite
-		return 
-			(varlookup2,
-			 obj2s ++ (case obj2s2 of [] -> []; _ -> [obj2modifier obj2s2]), 
-			 obj3s ++ (case obj3s2 of [] -> []; _ -> [obj3modifier obj3s2])  )
-
-getAndTransformSuiteObjs :: (Monad m) => [ComputationStateModifier] 
-	-> (Obj2Type -> Obj2Type)
-	-> (Obj3Type -> Obj3Type)
-	-> m ComputationStateModifier
-getAndTransformSuiteObjs suite obj2modifier obj3modifier = 
-	return $  \ ioWrappedState -> do
-		(varlookup,  obj2s,  obj3s)  <- ioWrappedState
-		(varlookup2, obj2s2, obj3s2) <- runComputations (return (varlookup, [], [])) suite
-		return 
-			(varlookup2,
-			 obj2s ++ (map obj2modifier obj2s2),
-			 obj3s ++ (map obj3modifier obj3s2)   )
-
-
-unionStatement = moduleWithSuite "union" $ \suite -> do
-	r :: ℝ <- argument "r"
-		`defaultTo` 0.0
-	if r > 0
-		then getAndCompressSuiteObjs suite (Prim.unionR r) (Prim.unionR r)
-		else getAndCompressSuiteObjs suite Prim.union Prim.union
-
-intersectStatement = moduleWithSuite "intersection" $ \suite -> do
-	r :: ℝ <- argument "r"
-		`defaultTo` 0.0
-	if r > 0
-		then getAndCompressSuiteObjs suite (Prim.intersectR r) (Prim.intersectR r)
-		else getAndCompressSuiteObjs suite Prim.intersect Prim.intersect
-
-differenceStatement = moduleWithSuite "difference" $ \suite -> do
-	r :: ℝ <- argument "r"
-		`defaultTo` 0.0
-	if r > 0
-		then getAndCompressSuiteObjs suite (Prim.differenceR r) (Prim.differenceR r)
-		else getAndCompressSuiteObjs suite Prim.difference Prim.difference
-
-translateStatement = moduleWithSuite "translate" $ \suite -> do
-	v <- argument "v"
-	caseOType v $
-		       ( \(x,y,z)-> 
-			getAndTransformSuiteObjs suite (Prim.translate (x,y) ) (Prim.translate (x,y,z)) 
-		) <||> ( \(x,y) -> 
-			getAndTransformSuiteObjs suite (Prim.translate (x,y) ) (Prim.translate (x,y,0.0)) 
-		) <||> ( \ x -> 
-			getAndTransformSuiteObjs suite (Prim.translate (x,0.0) ) (Prim.translate (x,0.0,0.0))
-		) <||> (\ _  -> noChange)
-
-deg2rad x = x / 180.0 * pi
-
--- This is mostly insane
-rotateStatement = moduleWithSuite "rotate" $ \suite -> do
-	a <- argument "a"
-	caseOType a $
-		       ( \xy  ->
-			getAndTransformSuiteObjs suite (Prim.rotate $ deg2rad xy ) (Prim.rotate3 (deg2rad xy, 0, 0) )
-		) <||> ( \(yz,xy,xz) ->
-			getAndTransformSuiteObjs suite (Prim.rotate $ deg2rad xy ) (Prim.rotate3 (deg2rad yz, deg2rad xz, deg2rad xy) )
-		) <||> ( \(yz,xz) ->
-			getAndTransformSuiteObjs suite (id ) (Prim.rotate3 (deg2rad yz, deg2rad xz, 0))
-		) <||> ( \_  -> noChange )
-
-
-scaleStatement = moduleWithSuite "scale" $ \suite -> do
-	v <- argument "v"
-	case v of
-		{-OList ((ONum x):(ONum y):(ONum z):[]) -> 
-			getAndTransformSuiteObjs suite (Prim.translate (x,y) ) (Prim.translate (x,y,z))
-		OList ((ONum x):(ONum y):[]) -> 
-			getAndTransformSuiteObjs suite (Prim.translate (x,y) ) (Prim.translate (x,y,0.0))
-		OList ((ONum x):[]) -> 
-			getAndTransformSuiteObjs suite (Prim.translate (x,0.0) ) (Prim.translate (x,0.0,0.0)-}
-		ONum s ->
-			getAndTransformSuiteObjs suite (Prim.scale s) (Prim.scale s)
-
-extrudeStatement = moduleWithSuite "linear_extrude" $ \suite -> do
-	height :: ℝ   <- argument "height"
-	center :: Bool<- argument "center" `defaultTo` False
-	twist  :: Any <- argument "twist"  `defaultTo` (ONum 0)
-	r      :: ℝ   <- argument "r"      `defaultTo` 0
-	let
-		degRotate = (\θ (x,y) -> (x*cos(θ)+y*sin(θ), y*cos(θ)-x*sin(θ))) . (*(2*pi/360))
-		shiftAsNeeded =
-			if center
-			then Prim.translate (0,0,-height/2.0)
-			else id
-	caseOType twist $
-		(\ (rot :: ℝ) ->
-			getAndModUpObj2s suite $ \obj -> 
-				shiftAsNeeded $ if rot == 0 
-					then Prim.extrudeR    r                               obj height
-					else Prim.extrudeRMod r (degRotate . (*(rot/height))) obj height
-		) <||> (\ (rotf :: ℝ -> Maybe ℝ) ->
-			getAndModUpObj2s suite $ \obj -> 
-				shiftAsNeeded $ Prim.extrudeRMod r 
-					(degRotate . (fromMaybe 0) . rotf) obj height
-		) <||> (\_ -> noChange)
-
-{-rotateExtrudeStatement = moduleWithSuite "rotate_extrude" $ \suite -> do
-	h <- realArgument "h"
-	center <- boolArgumentWithDefault "center" False
-	twist <- realArgumentWithDefault 0.0
-	r <- realArgumentWithDefault "r" 0.0
-	getAndModUpObj2s suite (\obj -> Prim.extrudeRMod r (\θ (x,y) -> (x*cos(θ)+y*sin(θ), y*cos(θ)-x*sin(θ)) )  obj h) 
--}
-
-shellStatement = moduleWithSuite "shell" $ \suite -> do
-	w :: ℝ <- argument "w"
-	getAndTransformSuiteObjs suite (Prim.shell w) (Prim.shell w)
-
--- Not a perenant solution! Breaks if can't pack.
-packStatement = moduleWithSuite "pack" $ \suite -> do
-	size :: ℝ2 <- argument "size"
-	sep  :: ℝ  <- argument "sep"
-	let
-		pack2 objs = case Prim.pack2 size sep objs of
-			Just a -> a
-		pack3 objs = case Prim.pack3 size sep objs of
-			Just a -> a
-	getAndCompressSuiteObjs  suite pack2 pack3
 

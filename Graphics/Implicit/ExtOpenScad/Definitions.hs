@@ -29,8 +29,15 @@ data OpenscadObj = OUndefined
 		 | OList [OpenscadObj]
 		 | OString String
 		 | OFunc ( OpenscadObj -> OpenscadObj ) 
-		 | OModule (ArgParser ([ComputationStateModifier]  -> ComputationStateModifier))
+		 | OModule ([ComputationStateModifier]  -> ArgParser ComputationStateModifier)
 		 | OError [String]
+
+instance Eq OpenscadObj where
+	(ONum a) == (ONum b) = a == b
+	(OBool a) == (OBool b) = a == b
+	(OList a) == (OList b) = a == b
+	(OString a) == (OString b) = a == b
+	_ == _ = False
 
 -- | We'd like to be able to turn OpenscadObjs into a given Haskell type
 class OTypeMirror a where
@@ -136,6 +143,13 @@ data ArgParser a
                  -- | For failure:
                  --   ArgParserFailIf (test) (error message) (child for if true)
                  | ArgParserFailIf Bool String (ArgParser a)
+                 --  An example, then next
+                 | ArgParserExample String (ArgParser a)
+                 --  A string to run as a test, then invariants for the results, then next
+                 | ArgParserTest String [TestInvariant] (ArgParser a)
+	deriving (Show)
+
+data TestInvariant = EulerCharacteristic Int 
 	deriving (Show)
 
 type ComputationState = IO (VariableLookup, [Obj2Type], [Obj3Type])
