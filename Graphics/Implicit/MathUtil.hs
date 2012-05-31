@@ -2,7 +2,7 @@
 -- Released under the GNU GPL, see LICENSE
 
 
-module Graphics.Implicit.MathUtil (rmax, rmin, rmaximum, rminimum, distFromLineSeg, pack, box3sWithin) where
+module Graphics.Implicit.MathUtil (rmax, rmin, rmaximum, rminimum, pack, box3sWithin) where
 
 import Data.List
 import Graphics.Implicit.Definitions
