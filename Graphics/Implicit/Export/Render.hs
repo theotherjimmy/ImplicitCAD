@@ -250,7 +250,7 @@ getContour (x1, y1) (x2, y2) res obj =
 			 |objY0 <- objV  | objY1 <- tail objV
 			] `using` (parListChunk (max 1 $ div ny 32) rdeepseq)
 
-	in concat $ concat $ segs -- (5) merge squares, etc
+	in (filter polylineNotNull) $ (map reducePolyline) $ orderLines $ concat $ concat $ segs -- (5) merge squares, etc
 
 
 
@@ -299,3 +299,29 @@ lag3 a = zipD3 a $ map (map tail) $ map tail $ tail a
 
 for3 = flip (map . map . map)
 -}
+
+orderLines :: [Polyline] -> [Polyline]
+orderLines [] = []
+orderLines (present:remaining) =
+	let
+		findNext ((p3:ps):segs) = if p3 == last present then (Just (p3:ps), segs) else
+			if last ps == last present then (Just (reverse $ p3:ps), segs) else
+			case findNext segs of (res1,res2) -> (res1,(p3:ps):res2)
+		findNext [] = (Nothing, [])
+	in
+		case findNext remaining of
+			(Nothing, _) -> present:(orderLines remaining)
+			(Just match, others) -> orderLines $ (present ++ tail match): others
+
+reducePolyline ((x1,y1):(x2,y2):(x3,y3):others) = 
+	if (x1,y1) == (x2,y2) then reducePolyline ((x2,y2):(x3,y3):others) else
+	if abs ( (y2-y1)/(x2-x1) - (y3-y1)/(x3-x1) ) < 0.0001 
+	   || ( (x2-x1) == 0 && (x3-x1) == 0 && (y2-y1)*(y3-y1) > 0)
+	then reducePolyline ((x1,y1):(x3,y3):others)
+	else (x1,y1) : reducePolyline ((x2,y2):(x3,y3):others)
+reducePolyline ((x1,y1):(x2,y2):others) = 
+	if (x1,y1) == (x2,y2) then reducePolyline ((x2,y2):others) else (x1,y1):(x2,y2):others
+reducePolyline l = l
+
+polylineNotNull (a:l) = not (null l)
+polylineNotNull [] = False

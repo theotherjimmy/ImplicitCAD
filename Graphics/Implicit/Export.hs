@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedStrings #-}
 -- Implicit CAD. Copyright (C) 2011, Christopher Olah (chris@colah.ca)
 -- Released under the GNU GPL, see LICENSE
 
@@ -10,6 +11,11 @@ import Data.Text.Lazy (Text,pack)
 import Data.Text.Lazy.IO (writeFile)
 import Prelude hiding (writeFile)
 import qualified Data.ByteString.Lazy as LBS
+
+import Graphics.Implicit.Export.TextBuilderUtils
+import Graphics.Implicit.ObjectUtil
+import Graphics.Implicit.Export.Symbolic.Rebound3
+import Graphics.Implicit.Export.Render
 
 -- class DiscreteApproxable
 import Graphics.Implicit.Export.Definitions
@@ -74,6 +80,9 @@ writeSCAD3 res filename obj = writeFile filename $ SymbolicFormats.scad3 res obj
 writeSCAD2 res filename obj = writeFile filename $ SymbolicFormats.scad2 res obj
 
 writePNG res = writeObject' res ImageFormatCodecs.savePngImage
+
+
+writeHacklabUltimakerGCode name obj = writeFile name $ hacklabUltimakerGCode obj
 
 {-
 renderRaw :: ℝ3 -> ℝ3 -> ℝ -> String -> Obj3 -> IO()
@@ -150,3 +159,94 @@ renderRaw2D (x1, y1) (x2, y2) res name obj =
 		writeFile name text
 -}
 -}
+
+hacklabUltimakerGCode :: SymbolicObj3 -> Text
+hacklabUltimakerGCode symbObj =
+	let
+		layerheight = 0.2
+		extrudePerMM = 0.01142
+		xyFval = " F600.0"
+		travelFval = " F10200.0"
+		xyres = 1.3
+		layers :: [(ℝ, [Polyline])]
+		layers = case rebound3 (getImplicit3 symbObj, getBox3 symbObj) of
+			(obj, ((x1,y1,z1),(x2,y2,z2))) -> 
+				let
+					slice z obj = \(x,y) -> obj (x,y,z)
+					getPolylines obj2 = getContour (x1, y1) (x2, y2) xyres obj2
+					layer z obj = (z + zShift, getPolylines $ slice z obj)
+					baseZ = 
+						let
+							bottomZ z 
+								| z > z2 = error "Empty Object"
+								| otherwise = 
+									case layer z obj of
+										(_, []) -> bottomZ (z + 0.001)
+										_ -> z
+						in
+							bottomZ z1
+					zShift = 0.3 - baseZ
+				in
+					filter (\(_, p) -> (not.null)p) [layer z obj | z <- [baseZ, baseZ + layerheight .. z2]]
+		gcodeHeader = ";(Some text that says we're awesome)\n\
+						\M109 S218.000000\n\
+						\M92 X79.1359 Y79.1359 Z492.307 E933.3940\n\
+						\G21\n\
+						\G90\n\
+						\M107\n\
+						\G28 X0 Y0\n\
+						\G28 Z0\n\
+						\G92 X0 Y0 Z0 E0\n\
+						\G1 Z15.0 F180\n\
+						\G92 E0\n\
+						\G1 F200 E3\n\
+						\G92 E0\n\
+						\G1 F10200\n"
+		gcodeFooter = "M104 S0\n\
+						\M140 S0\n\
+						\G91\n\
+						\G1 F300 E-1\n\
+						\G1 X-20.0 Y-20.0 Z0.5 F10200 E-5\n\
+						\G28 X0 Y0\n\
+						\M84\n\
+						\G90\n"
+		layerFooter = "G92 E0\n"
+		gcodeXYMove :: ℝ2 -> Builder
+		gcodeXYMove (x, y) = mconcat [" X", buildTruncFloat x, " Y", buildTruncFloat y]
+
+		gcodeZMove :: ℝ -> Builder
+		gcodeZMove z = mconcat [" Z", buildTruncFloat z]
+
+		gcodeMove :: Builder -> Builder -> Builder
+		gcodeMove move f = mconcat ["G1", move, f]
+
+		gcodeExtrudeMove :: Builder -> ℝ -> Builder
+		gcodeExtrudeMove move e = mconcat [move, " E", buildTruncFloat e]
+
+		gcode :: Builder -> Builder
+		gcode command = mconcat [command, "\n"]
+
+		polylineGcode :: Polyline -> Builder
+		polylineGcode points@(start@(x1,y1):others@(next@(x2,y2):_)) =
+			let
+				--firstPointGcode = "G1 X" <> x1 <> " Y" <> y1 <> travelFval <> "\n"
+				firstPointGcode = gcode $ gcodeMove (gcodeXYMove start) travelFval
+				segGcode (x1,y1) next@(x2, y2) =
+					let
+						distance = sqrt ((x2 - x1)^2 + (y2 - y1)^2)
+						eVal = distance * extrudePerMM
+					in
+						gcode $ gcodeExtrudeMove (gcodeMove (gcodeXYMove next) xyFval) eVal
+						--"G1 X" <> x2 <> " Y" <> y2 <> xyFval <> " E" <> eVal <> "\n"
+			in
+				firstPointGcode <> mconcat (zipWith segGcode points (tail points) )
+		layerGcode :: (ℝ, [Polyline]) -> Builder
+		layerGcode (z, polylines) = 
+			let
+				firstZMove = gcode $ gcodeMove (gcodeZMove z) travelFval
+				--firstZMove = "G1 Z" <> z <> travelFval <> "\n"
+			in
+				firstZMove <> mconcat (map polylineGcode polylines) <> layerFooter
+
+	in
+		toLazyText $ gcodeHeader <> mconcat (map layerGcode layers) <> gcodeFooter
