@@ -6,7 +6,8 @@ module Graphics.Implicit.Export where
 
 import Graphics.Implicit.Definitions
 --import Graphics.Implicit.Operations (slice)
-
+import qualified Data.Maybe as Maybe
+import qualified Data.List as List
 import Data.Text.Lazy (Text,pack)
 import Data.Text.Lazy.IO (writeFile)
 import Prelude hiding (writeFile)
@@ -163,31 +164,33 @@ renderRaw2D (x1, y1) (x2, y2) res name obj =
 hacklabUltimakerGCode :: SymbolicObj3 -> Text
 hacklabUltimakerGCode symbObj =
 	let
+		(obj, ((x1,y1,z1),(x2,y2,z2))) = rebound3 (getImplicit3 symbObj, getBox3 symbObj)
+
 		layerheight = 0.2
 		extrudePerMM = 0.01142
 		xyFval = " F600.0"
 		travelFval = " F10200.0"
 		xyres = 1.3
+		(xLength, yLength, zLength) = (200, 200, 200)
+
 		layers :: [(ℝ, [Polyline])]
-		layers = case rebound3 (getImplicit3 symbObj, getBox3 symbObj) of
-			(obj, ((x1,y1,z1),(x2,y2,z2))) -> 
-				let
-					slice z obj = \(x,y) -> obj (x,y,z)
-					getPolylines obj2 = getContour (x1, y1) (x2, y2) xyres obj2
-					layer z obj = (z + zShift, getPolylines $ slice z obj)
-					baseZ = 
-						let
-							bottomZ z 
-								| z > z2 = error "Empty Object"
-								| otherwise = 
-									case layer z obj of
-										(_, []) -> bottomZ (z + 0.001)
-										_ -> z
-						in
-							bottomZ z1
-					zShift = 0.3 - baseZ
-				in
-					filter (\(_, p) -> (not.null)p) [layer z obj | z <- [baseZ, baseZ + layerheight .. z2]]
+		layers =
+			let
+				slice z obj = \(x,y) -> obj (x,y,z)
+				getPolylines obj2 = getContour (x1, y1) (x2, y2) xyres obj2
+				
+				baseZ = Maybe.fromMaybe z2 $ List.find 
+					(\z -> not . null . getPolylines $ slice z obj)
+					[z1, z1 + 0.001 .. z2]
+				zShift = 0.3 - baseZ
+				(xShift, yShift) = (xLength/2 - (x1+x2)/2, yLength/2 - (y1 + y2)/2)
+				
+				adjust (x,y) = (x + xShift, y+yShift)
+				layer z obj = (z + zShift, map (map adjust) $ getPolylines $ slice z obj)
+				layers = [layer z obj | z <- [baseZ, baseZ + layerheight .. z2]]
+			in
+				filter (not.null.snd) layers
+
 		gcodeHeader = ";(Some text that says we're awesome)\n\
 						\M109 S218.000000\n\
 						\M92 X79.1359 Y79.1359 Z492.307 E933.3940\n\
@@ -202,6 +205,7 @@ hacklabUltimakerGCode symbObj =
 						\G1 F200 E3\n\
 						\G92 E0\n\
 						\G1 F10200\n"
+
 		gcodeFooter = "M104 S0\n\
 						\M140 S0\n\
 						\G91\n\
@@ -210,7 +214,9 @@ hacklabUltimakerGCode symbObj =
 						\G28 X0 Y0\n\
 						\M84\n\
 						\G90\n"
+
 		layerFooter = "G92 E0\n"
+
 		gcodeXYMove :: ℝ2 -> Builder
 		gcodeXYMove (x, y) = mconcat [" X", buildTruncFloat x, " Y", buildTruncFloat y]
 
@@ -240,6 +246,7 @@ hacklabUltimakerGCode symbObj =
 						--"G1 X" <> x2 <> " Y" <> y2 <> xyFval <> " E" <> eVal <> "\n"
 			in
 				firstPointGcode <> mconcat (zipWith segGcode points (tail points) )
+
 		layerGcode :: (ℝ, [Polyline]) -> Builder
 		layerGcode (z, polylines) = 
 			let
