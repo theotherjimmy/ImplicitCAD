@@ -81,8 +81,11 @@ getBox2 (Translate2 v symbObj) =
 getBox2 (Scale2 s symbObj) =
 	let
 		(a,b) = getBox2 symbObj
+                ((x_a,y_a),(x_b,y_b)) = (s ⋯* a, s ⋯* b)
+                a' = (min x_a x_b, min y_a y_b)
+                b' = (max x_a x_b, max y_a y_b)
 	in
-		(s ⋯* a, s ⋯* b)
+	        (a',b')	
 
 getBox2 (Rotate2 θ symbObj) = 
 	let
